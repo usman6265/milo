@@ -12,6 +12,8 @@ package org.eclipse.milo.opcua.sdk.server.api;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
+import java.util.stream.Collectors;
 
 import com.google.common.collect.Lists;
 import org.eclipse.milo.opcua.sdk.core.Reference;
@@ -19,28 +21,14 @@ import org.eclipse.milo.opcua.sdk.server.OpcUaServer;
 import org.eclipse.milo.opcua.sdk.server.UaNodeManager;
 import org.eclipse.milo.opcua.sdk.server.api.methods.MethodInvocationHandler;
 import org.eclipse.milo.opcua.sdk.server.api.services.MethodServices;
-import org.eclipse.milo.opcua.sdk.server.nodes.AttributeContext;
-import org.eclipse.milo.opcua.sdk.server.nodes.UaMethodNode;
-import org.eclipse.milo.opcua.sdk.server.nodes.UaNode;
-import org.eclipse.milo.opcua.sdk.server.nodes.UaNodeContext;
-import org.eclipse.milo.opcua.sdk.server.nodes.UaObjectNode;
-import org.eclipse.milo.opcua.sdk.server.nodes.UaObjectTypeNode;
-import org.eclipse.milo.opcua.sdk.server.nodes.UaServerNode;
+import org.eclipse.milo.opcua.sdk.server.nodes.*;
 import org.eclipse.milo.opcua.sdk.server.nodes.factories.NodeFactory;
 import org.eclipse.milo.opcua.stack.core.AttributeId;
 import org.eclipse.milo.opcua.stack.core.StatusCodes;
 import org.eclipse.milo.opcua.stack.core.UaException;
-import org.eclipse.milo.opcua.stack.core.types.builtin.DataValue;
-import org.eclipse.milo.opcua.stack.core.types.builtin.DiagnosticInfo;
-import org.eclipse.milo.opcua.stack.core.types.builtin.NodeId;
-import org.eclipse.milo.opcua.stack.core.types.builtin.StatusCode;
-import org.eclipse.milo.opcua.stack.core.types.builtin.Variant;
+import org.eclipse.milo.opcua.stack.core.types.builtin.*;
 import org.eclipse.milo.opcua.stack.core.types.enumerated.TimestampsToReturn;
-import org.eclipse.milo.opcua.stack.core.types.structured.CallMethodRequest;
-import org.eclipse.milo.opcua.stack.core.types.structured.CallMethodResult;
-import org.eclipse.milo.opcua.stack.core.types.structured.ReadValueId;
-import org.eclipse.milo.opcua.stack.core.types.structured.ViewDescription;
-import org.eclipse.milo.opcua.stack.core.types.structured.WriteValue;
+import org.eclipse.milo.opcua.stack.core.types.structured.*;
 import org.eclipse.milo.opcua.stack.core.util.Unit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -130,6 +118,101 @@ public abstract class ManagedAddressSpace implements AddressSpace {
     public void unregisterNodes(UnregisterNodesContext context, List<NodeId> nodeIds) {
         context.success(Collections.nCopies(nodeIds.size(), Unit.VALUE));
     }
+
+    /**
+     * @auther Muhammad Usman
+     * @param context      the {@link HistoryReadContext}.
+     * @param details
+     * @param timestamps   requested timestamp values.
+     * @param readValueIds the values to read.
+     *                     hi
+     */
+
+    @Override
+    public void historyRead(
+            HistoryReadContext context,
+            HistoryReadDetails details,
+            TimestampsToReturn timestamps,
+            List<HistoryReadValueId> readValueIds
+
+    ) {
+        List<HistoryReadResult> results = Lists.newArrayListWithCapacity(readValueIds.size());
+
+        for (HistoryReadValueId hisreadValueId : readValueIds) {
+            Optional<UaNode> node = nodeManager.getNode(hisreadValueId.getNodeId());
+
+
+            if (details instanceof ReadRawModifiedDetails) {
+
+                if (node.isPresent()) {
+                    UaVariableNode varNode = (UaVariableNode) node.get();
+                    if (varNode.getHistorizing()) {
+                        ReadRawModifiedDetails readDetails = (ReadRawModifiedDetails) details;
+
+                        long startTime = readDetails.getStartTime().getUtcTime();
+                        long endTime = readDetails.getEndTime().getUtcTime();
+
+
+                        List<DataValue> historyDataList = null;
+
+                        historyDataList = queries.getData(varNode);
+
+                        if (endTime == DateTime.NULL_VALUE.getUtcTime()) {
+                            DataValue d = historyDataList.get(0);
+                            HistoryData h = new HistoryData(new DataValue[]{d});
+
+                            HistoryReadResult result = new HistoryReadResult(StatusCode.GOOD,
+                                    ByteString.NULL_VALUE, ExtensionObject.encode(server.getSerializationContext(),
+                                    h));
+
+                            results.add(result);
+                        } else {
+
+                            List<DataValue> collect = historyDataList.stream().filter(dataValue -> dataValue.getServerTime().getUtcTime() > startTime && dataValue.getServerTime().getUtcTime() < endTime).collect(Collectors.toList());
+                            DataValue[] array = new DataValue[collect.size()];
+
+                            for (int i = 0; i < collect.size(); i++) {
+                                array[i] = collect.get(i);
+                            }
+
+                            HistoryData historyDat = new HistoryData(array);
+
+                            HistoryReadResult result = new HistoryReadResult(StatusCode.GOOD,
+                                    ByteString.NULL_VALUE, ExtensionObject.encode(server.getSerializationContext(),
+                                    historyDat));
+                            results.add(result);
+                        }
+                    } else {
+                        HistoryReadResult result = new HistoryReadResult(
+                                new StatusCode(StatusCodes.Bad_HistoryOperationUnsupported),
+                                null,
+                                null);
+                        results.add(result);
+                    }
+                } else {
+                    HistoryReadResult result = new HistoryReadResult(
+                            new StatusCode(StatusCodes.Bad_NodeIdUnknown),
+                            null,
+                            null);
+                    results.add(result);
+                }
+
+            }
+            if (details instanceof ReadEventDetails) {
+                //Write code here for reading Event History
+                results.add(null);
+            }
+            if (details instanceof ReadAtTimeDetails) {//Write Code for reading history of this specific type
+                results.add(null);
+            }
+            if (details instanceof ReadProcessedDetails) {//Write Code for reading history of this specific type
+                results.add(null);
+            }
+
+            context.success(results);
+        }
+    }
+
 
     @Override
     public void read(
